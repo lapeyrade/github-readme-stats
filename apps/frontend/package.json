@@ -35,8 +35,8 @@
     "uuid": "^14.0.1"
   },
   "devDependencies": {
-    "@types/react": "19.2.17",
-    "@types/react-dom": "19.2.3",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
     "clsx": "2.1.1",
     "jsdom": "catalog:default",
     "starlight-links-validator": "0.25.2",
