@@ -32,4 +32,9 @@ jobs:
           git remote add upstream https://github.com/stats-organization/github-stats-extended.git
           git fetch upstream release
           git merge --no-edit upstream/release
-          git push origin release release:master
+          git push origin release
+
+          git fetch origin master
+          git switch --force-create master origin/master
+          git merge --no-edit release
+          git push origin master
