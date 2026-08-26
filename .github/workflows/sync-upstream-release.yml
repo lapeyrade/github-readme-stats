@@ -1,6 +1,9 @@
 name: Sync upstream release automatically
 
 on:
+  push:
+    branches:
+      - release
   schedule:
     - cron: "17 4 * * *"
   workflow_dispatch:
@@ -29,4 +32,4 @@ jobs:
           git remote add upstream https://github.com/stats-organization/github-stats-extended.git
           git fetch upstream release
           git merge --no-edit upstream/release
-          git push origin release
+          git push origin release release:master
