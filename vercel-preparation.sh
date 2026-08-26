@@ -13,7 +13,7 @@ cp -RP apps/backend/. apps/backend-copy/
 (shopt -s dotglob && mv apps/backend-copy/* apps/backend/.vercel/output/functions/api.func/)
 cp -RP apps/backend/.vercel/output/functions/api.func/_dot_vercel_copy/output apps/backend/.vercel/
 rm -rf apps/deployment
-pnpm install
+pnpm install --no-frozen-lockfile
 pnpm build:frontend
 mkdir -p apps/backend/.vercel/output/static/frontend/
 cp -RP apps/frontend/build/. apps/backend/.vercel/output/static/frontend/
