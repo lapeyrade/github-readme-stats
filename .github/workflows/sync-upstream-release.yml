@@ -1,13 +1,12 @@
-name: Sync upstream release
+name: Sync upstream release automatically
 
 on:
   schedule:
-    - cron: "17 4 * * 1"
+    - cron: "17 4 * * *"
   workflow_dispatch:
 
 permissions:
   contents: write
-  pull-requests: write
 
 concurrency:
   group: sync-upstream-release
@@ -20,42 +19,14 @@ jobs:
       - name: Check out the maintained release branch
         uses: actions/checkout@v6
         with:
+          ref: release
           fetch-depth: 0
 
-      - name: Merge the official release into the sync branch
-        env:
-          SYNC_BRANCH: upstream-release-sync
+      - name: Merge the official release directly
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git remote add upstream https://github.com/stats-organization/github-stats-extended.git
           git fetch upstream release
-
-          if git ls-remote --exit-code --heads origin "$SYNC_BRANCH" >/dev/null 2>&1; then
-            git fetch origin "$SYNC_BRANCH"
-            git switch --create "$SYNC_BRANCH" --track "origin/$SYNC_BRANCH"
-            git merge --no-edit origin/release
-          else
-            git switch --create "$SYNC_BRANCH" origin/release
-          fi
-
           git merge --no-edit upstream/release
-          git push origin "HEAD:$SYNC_BRANCH"
-
-      - name: Open an upstream synchronization pull request
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SYNC_BRANCH: upstream-release-sync
-        run: |
-          if git diff --quiet origin/release HEAD; then
-            echo "The maintained branch already contains the official release."
-            exit 0
-          fi
-
-          if [ -z "$(gh pr list --base release --head "$SYNC_BRANCH" --state open --json number --jq '.[0].number')" ]; then
-            gh pr create \
-              --base release \
-              --head "$SYNC_BRANCH" \
-              --title "Sync official release" \
-              --body "Automated synchronization from stats-organization/github-stats-extended release. Review the Vercel preview before merging."
-          fi
+          git push origin release
