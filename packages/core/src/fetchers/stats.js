@@ -73,6 +73,32 @@ const GRAPHQL_STATS_QUERY = `
   }
 `;
 
+const FIRST_GITHUB_CONTRIBUTION_YEAR = 2008;
+
+const buildAllCommitsQuery = () => {
+  const currentYear = new Date().getUTCFullYear();
+  const yearlyCollections = [];
+
+  for (let year = FIRST_GITHUB_CONTRIBUTION_YEAR; year <= currentYear; year++) {
+    yearlyCollections.push(`
+      year${year}: contributionsCollection(
+        from: "${year}-01-01T00:00:00Z"
+        to: "${year}-12-31T23:59:59Z"
+      ) {
+        totalCommitContributions
+      }
+    `);
+  }
+
+  return `
+    query allCommitContributions($login: String!) {
+      user(login: $login) {
+        ${yearlyCollections.join("\n")}
+      }
+    }
+  `;
+};
+
 /**
  * Stats fetcher object.
  *
@@ -91,6 +117,48 @@ const fetcher = (variables, token) => {
       Authorization: `bearer ${token}`,
     },
   );
+};
+
+const allCommitsFetcher = (variables, token) => {
+  return request(
+    {
+      query: buildAllCommitsQuery(),
+      variables,
+    },
+    {
+      Authorization: `Bearer ${token}`,
+    },
+  );
+};
+
+const fetchAllCommitContributions = async (username, pat) => {
+  if (!githubUsernameRegex.test(username)) {
+    logger.log("Invalid username provided.");
+    throw new Error("Invalid username provided.");
+  }
+
+  const res = await retryer(allCommitsFetcher, { login: username }, pat);
+  if (res.data.errors?.length) {
+    throw new CustomError(
+      res.data.errors[0].message || "Could not fetch all commit contributions.",
+      CustomError.GRAPHQL_ERROR,
+    );
+  }
+
+  const yearlyCollections = res.data.data?.user;
+  const totalCommits = Object.values(yearlyCollections ?? {}).reduce(
+    (total, collection) => total + collection.totalCommitContributions,
+    0,
+  );
+
+  if (isNaN(totalCommits)) {
+    throw new CustomError(
+      "Could not fetch all commit contributions.",
+      CustomError.GRAPHQL_ERROR,
+    );
+  }
+
+  return totalCommits;
 };
 
 /**
@@ -190,7 +258,7 @@ const fetchTotalItems = (variables, token) => {
     headers: {
       "Content-Type": "application/json",
       Accept: "application/vnd.github.cloak-preview",
-      Authorization: `token ${token}`,
+      Authorization: `Bearer ${token}`,
     },
   });
 };
@@ -397,16 +465,9 @@ const fetchStats = async (
 
   stats.name = user.name || user.login;
 
-  // if include_all_commits, fetch all commits using the REST API.
+  // Sum GitHub's yearly commit contributions when all years are requested.
   if (include_all_commits) {
-    stats.totalCommits = await totalItemsFetcher(
-      username,
-      repo,
-      owner,
-      "commits",
-      `author:${username}`,
-      pat,
-    );
+    stats.totalCommits = await fetchAllCommitContributions(username, pat);
   } else {
     stats.totalCommits = user.commits.totalCommitContributions;
   }

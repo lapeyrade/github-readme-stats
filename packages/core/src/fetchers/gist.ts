@@ -43,7 +43,7 @@ const fetcher = (
 ): Promise<AxiosResponse> => {
   return request(
     { query: QUERY, variables },
-    { Authorization: `token ${token}` },
+    { Authorization: `Bearer ${token}` },
   );
 };
 

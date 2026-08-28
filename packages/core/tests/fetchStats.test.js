@@ -116,6 +116,20 @@ beforeEach(() => {
   mock.onPost("https://api.github.com/graphql").reply((cfg) => {
     let req = JSON.parse(cfg.data);
 
+    if (req.query.includes("allCommitContributions")) {
+      return [
+        200,
+        {
+          data: {
+            user: {
+              year2025: { totalCommitContributions: 600 },
+              year2026: { totalCommitContributions: 400 },
+            },
+          },
+        },
+      ];
+    }
+
     if (
       req.variables &&
       req.variables.startTime &&
@@ -220,13 +234,13 @@ describe("Test fetchStats", () => {
   });
 
   it("should fetch total commits", async () => {
-    mock
-      .onGet(
-        "https://api.github.com/search/commits?per_page=1&q=author:anuraghazra",
-      )
-      .reply(200, { total_count: 1000 });
-
     let stats = await fetchStats("anuraghazra", true);
+    const allCommitsRequest = mock.history.post.find(({ data }) =>
+      data.includes("allCommitContributions"),
+    );
+    expect(allCommitsRequest.headers.Authorization).toMatch(
+      /^Bearer dummyPAT[12]$/,
+    );
     const rank = calculateRank({
       all_commits: true,
       commits: 1000,
@@ -266,24 +280,18 @@ describe("Test fetchStats", () => {
   });
 
   it("should throw specific error when include_all_commits true and API returns error", async () => {
-    mock
-      .onGet(
-        "https://api.github.com/search/commits?per_page=1&q=author:anuraghazra",
-      )
-      .reply(200, { error: "Some test error message" });
+    mock.reset();
+    mock.onPost("https://api.github.com/graphql").replyOnce(200, data_stats);
+    mock.onPost("https://api.github.com/graphql").replyOnce(200, {
+      errors: [{ message: "Some test error message" }],
+    });
 
     await expect(fetchStats("anuraghazra", true)).rejects.toThrow(
-      "Could not fetch data from GitHub REST API.",
+      "Some test error message",
     );
   });
 
   it("should exclude stars of the `test-repo-1` repository", async () => {
-    mock
-      .onGet(
-        "https://api.github.com/search/commits?per_page=1&q=author:anuraghazra",
-      )
-      .reply(200, { total_count: 1000 });
-
     let stats = await fetchStats("anuraghazra", true, ["test-repo-1"]);
     const rank = calculateRank({
       all_commits: true,
