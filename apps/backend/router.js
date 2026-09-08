@@ -1,3 +1,5 @@
+import "./src/private-commits.js";
+
 import {
   api,
   gist,

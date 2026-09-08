@@ -18,6 +18,7 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Check out the maintained release branch
         uses: actions/checkout@v6
@@ -25,16 +26,27 @@ jobs:
           ref: release
           fetch-depth: 0
 
-      - name: Merge the official release directly
+      - name: Prepare both branches without publishing
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git remote add upstream https://github.com/stats-organization/github-stats-extended.git
           git fetch upstream release
           git merge --no-edit upstream/release
-          git push origin release
-
           git fetch origin master
           git switch --force-create master origin/master
           git merge --no-edit release
-          git push origin master
+
+      - name: Install dependencies
+        uses: ./.github/actions/install-dependencies
+        with:
+          node-version: "24"
+
+      - name: Verify upstream and the private commit counter
+        run: |
+          pnpm run build:packages
+          pnpm exec vitest run
+          pnpm run build:frontend
+
+      - name: Publish both validated branches together
+        run: git push --atomic origin release master
