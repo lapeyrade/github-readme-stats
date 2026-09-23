@@ -26,16 +26,50 @@ jobs:
           ref: release
           fetch-depth: 0
 
-      - name: Prepare both branches without publishing
+      - name: Apply upstream changes without upstream workflows
         run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git remote add upstream https://github.com/stats-organization/github-stats-extended.git
           git fetch upstream release
-          git merge --no-edit upstream/release
+
+          if [ -f .upstream-release-sha ]; then
+            previous_upstream=$(cat .upstream-release-sha)
+          else
+            previous_upstream=$(git merge-base HEAD upstream/release)
+          fi
+          git merge-base --is-ancestor "$previous_upstream" upstream/release
+
+          # GITHUB_TOKEN cannot publish upstream's workflow-file changes.
+          # Apply only new upstream changes, preserving our own workflows.
+          if ! git diff --quiet "$previous_upstream" upstream/release -- . ':(exclude).github/workflows/**'; then
+            git diff --binary "$previous_upstream" upstream/release -- . ':(exclude).github/workflows/**' | git apply --3way --index
+          fi
+          git rev-parse upstream/release > .upstream-release-sha
+          git add .upstream-release-sha
+          if ! git diff --cached --quiet; then
+            git commit -m "Sync upstream release without workflow changes"
+          fi
+
           git fetch origin master
           git switch --force-create master origin/master
-          git merge --no-edit release
+          if [ -f .synced-release-sha ]; then
+            previous_release=$(cat .synced-release-sha)
+          else
+            previous_release=$(git merge-base master release)
+          fi
+          git merge-base --is-ancestor "$previous_release" release
+
+          # Do not introduce release's workflow commits on master either.
+          if ! git diff --quiet "$previous_release" release -- . ':(exclude).github/workflows/**'; then
+            git diff --binary "$previous_release" release -- . ':(exclude).github/workflows/**' | git apply --3way --index
+          fi
+          git rev-parse release > .synced-release-sha
+          git add .synced-release-sha
+          if ! git diff --cached --quiet; then
+            git commit -m "Publish validated release without workflow changes"
+          fi
 
       - name: Install dependencies
         uses: ./.github/actions/install-dependencies
