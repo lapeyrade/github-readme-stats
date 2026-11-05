@@ -10,7 +10,7 @@ import axios from "axios";
  * Install the server-side historical commit adapter.
  * @returns {number} Axios interceptor identifier.
  */
-export function installPrivateCommits(client = axios, now = () => new Date()) {
+function installPrivateCommits(client = axios, now = () => new Date()) {
   return client.interceptors.request.use((config) => {
     const url = new URL(config.url, "https://localhost");
     if (
