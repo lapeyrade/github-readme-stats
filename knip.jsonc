@@ -1,5 +1,9 @@
 {
   "$schema": "./node_modules/knip/schema.json",
+  "entry": [
+    "scripts/build-personal-vercel.mjs",
+    "scripts/sync-personal-fork.test.mjs"
+  ],
   "vitest": {
     "entry": ["tests/**/*.{test,test-d,bench}.{js,ts}"]
   },
@@ -9,7 +13,7 @@
       "ignore": ["src/graphql/generated/**"]
     },
     "apps/backend": {
-      "entry": ["api/*.js", "scripts/*.js"]
+      "entry": ["api/*.js", "scripts/*.{js,mjs}", "vercel-handler.js"]
     },
     "apps/frontend": {
       "entry": ["src/wakatime-override.ts"],
