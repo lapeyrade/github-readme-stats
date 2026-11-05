@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -57,7 +57,12 @@ const functionConfig = JSON.parse(
 assert.equal(config.version, 3);
 assert.equal(functionConfig.runtime, "nodejs24.x");
 assert.equal(functionConfig.handler, "vercel-handler.js");
-assert(config.routes.some((route) => route.dest === "/api"));
+for (const route of ["gist", "pin", "top-langs", "wakatime"]) {
+  assert.equal(
+    await realpath(path.join(output, "functions/api", route + ".func")),
+    functionPath,
+  );
+}
 await readFile(path.join(output, "static/frontend/docs/index.html"));
 const { default: app } = await import(
   pathToFileURL(path.join(functionPath, functionConfig.handler))
@@ -81,6 +86,11 @@ try {
   assert(card.includes("Total Commits  : 2963"));
   assert(card.includes("Total PRs: 73"));
   assert.equal(historicalRequests, 1);
+  for (const route of ["gist", "pin", "top-langs", "wakatime"]) {
+    const cardResponse = await fetch(`${base}/api/${route}`);
+    assert.equal(cardResponse.status, 200);
+    assert.match(cardResponse.headers.get("content-type"), /image\/svg\+xml/);
+  }
   assert.equal((await fetch(`${base}/api/unknown`)).status, 404);
   console.log(
     "Packaged Vercel function, historical commits, routing and static docs verified without live network access.",
