@@ -1,15 +1,13 @@
 import { api } from "@stats-organization/github-readme-stats-core";
 import axios from "axios";
-import MockAdapter from "axios-mock-adapter";
-import { afterEach, expect, it } from "vitest";
+import nock from "nock";
+import supertest from "supertest";
+import { expect, it } from "vitest";
 
-import "../src/private-commits.js";
-
-const mock = new MockAdapter(axios);
-afterEach(() => mock.reset());
+import app from "../vercel-handler.js";
 
 /**
- *
+ * @returns {object} Complete synthetic yearly commit counts.
  */
 function history() {
   return Object.fromEntries(
@@ -21,17 +19,20 @@ function history() {
 }
 
 /**
- *
+ * @returns {Array<string>} GraphQL queries received by the mock.
  */
 function mockGitHub(years = history(), errors) {
-  mock.onPost("https://api.github.com/graphql").reply((config) => {
-    const { query } = JSON.parse(config.data);
-    if (query.includes("PrivateHistoricalCommits")) {
-      return [200, { data: { user: years }, errors }];
-    }
-    return [
-      200,
-      {
+  const queries = [];
+  nock("https://api.github.com")
+    .persist()
+    .post("/graphql")
+    .reply(200, async (request) => {
+      const { query } = await request.json();
+      queries.push(query);
+      if (query.includes("PrivateHistoricalCommits")) {
+        return { data: { user: years }, errors };
+      }
+      return {
         data: {
           user: {
             name: "Sylvain",
@@ -51,13 +52,13 @@ function mockGitHub(years = history(), errors) {
             },
           },
         },
-      },
-    ];
-  });
+      };
+    });
+  return queries;
 }
 
 it("keeps historical commits and separate PR/issue metrics through upstream's actual card API", async () => {
-  mockGitHub();
+  const queries = mockGitHub();
   const card = await api(
     { username: "lapeyrade", include_all_commits: "true" },
     "test-token",
@@ -66,7 +67,19 @@ it("keeps historical commits and separate PR/issue metrics through upstream's ac
   expect(card.content).toContain("2963");
   expect(card.content).toContain("Total PRs: 73");
   expect(card.content).toContain("Total Issues: 23");
-  expect(mock.history.get).toHaveLength(0);
+  expect(
+    queries.some((query) => query.includes("PrivateHistoricalCommits")),
+  ).toBe(true);
+});
+
+it("loads the adapter through the actual Vercel Express entrypoint", async () => {
+  mockGitHub();
+  const response = await supertest(app)
+    .get("/api/?username=lapeyrade&include_all_commits=true&number_format=long")
+    .expect("Content-Type", "image/svg+xml")
+    .expect(200);
+  expect(response.body.toString()).toContain("Total Commits  : 2963");
+  expect(response.body.toString()).toContain("Total PRs: 73");
 });
 
 it("rejects a missing year instead of silently publishing a smaller count", async () => {
@@ -81,7 +94,7 @@ it("rejects a missing year instead of silently publishing a smaller count", asyn
 });
 
 it("rejects partial GraphQL responses", async () => {
-  mockGitHub(history(), [{ message: "rate limit" }]);
+  mockGitHub(history(), [{ message: "partial GraphQL response" }]);
   const card = await api(
     { username: "lapeyrade", include_all_commits: "true" },
     "test-token",
@@ -90,7 +103,11 @@ it("rejects partial GraphQL responses", async () => {
 });
 
 it("preserves scoped searches and other profiles", async () => {
-  mock.onGet().reply(200, { total_count: 7 });
+  const search = nock("https://api.github.com")
+    .get("/search/commits")
+    .query(true)
+    .times(2)
+    .reply(200, { total_count: 7 });
   for (const query of [
     "author:someone",
     "repo:lapeyrade/thesis author:lapeyrade",
@@ -100,5 +117,32 @@ it("preserves scoped searches and other profiles", async () => {
     );
     expect(response.data.total_count).toBe(7);
   }
-  expect(mock.history.post).toHaveLength(0);
+  expect(search.isDone()).toBe(true);
+});
+
+it.each([null, -1, 1.5])(
+  "rejects invalid yearly commit counts (%s)",
+  async (invalid) => {
+    const years = history();
+    years.year2018 = { totalCommitContributions: invalid };
+    mockGitHub(years);
+    const card = await api(
+      { username: "lapeyrade", include_all_commits: "true" },
+      "test-token",
+    );
+    expect(card.status).toBe("error - temporary");
+  },
+);
+
+it("does not replace the normal recent-commits option", async () => {
+  const queries = mockGitHub();
+  const card = await api(
+    { username: "lapeyrade", number_format: "long" },
+    "test-token",
+  );
+  expect(card.status).toBe("success");
+  expect(card.content).toContain("963");
+  expect(
+    queries.some((query) => query.includes("PrivateHistoricalCommits")),
+  ).toBe(false);
 });

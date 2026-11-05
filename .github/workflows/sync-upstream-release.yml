@@ -2,85 +2,110 @@ name: Sync upstream release automatically
 
 on:
   push:
-    branches:
-      - release
+    branches: [release]
   schedule:
     - cron: "17 4 * * *"
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: sync-upstream-release
   cancel-in-progress: false
 
 jobs:
-  sync:
+  validate:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      changed: ${{ steps.prepare.outputs.changed }}
+      release: ${{ steps.prepare.outputs.release }}
+      master: ${{ steps.prepare.outputs.master }}
+      release_base: ${{ steps.prepare.outputs.release_base }}
+      master_base: ${{ steps.prepare.outputs.master_base }}
     steps:
-      - name: Check out the maintained release branch
-        uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: release
           fetch-depth: 0
-
-      - name: Apply upstream changes without upstream workflows
+          persist-credentials: false
+      - name: Prepare both branches without upstream workflows
+        id: prepare
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git remote add upstream https://github.com/stats-organization/github-stats-extended.git
           git fetch upstream release
-
-          if [ -f .upstream-release-sha ]; then
-            previous_upstream=$(cat .upstream-release-sha)
-          else
-            previous_upstream=$(git merge-base HEAD upstream/release)
-          fi
-          git merge-base --is-ancestor "$previous_upstream" upstream/release
-
-          # GITHUB_TOKEN cannot publish upstream's workflow-file changes.
-          # Apply only new upstream changes, preserving our own workflows.
-          if ! git diff --quiet "$previous_upstream" upstream/release -- . ':(exclude).github/workflows/**'; then
-            git diff --binary "$previous_upstream" upstream/release -- . ':(exclude).github/workflows/**' | git apply --3way --index
-          fi
-          git rev-parse upstream/release > .upstream-release-sha
-          git add .upstream-release-sha
-          if ! git diff --cached --quiet; then
-            git commit -m "Sync upstream release without workflow changes"
-          fi
-
-          git fetch origin master
-          git switch --force-create master origin/master
-          if [ -f .synced-release-sha ]; then
-            previous_release=$(cat .synced-release-sha)
-          else
-            previous_release=$(git merge-base master release)
-          fi
-          git merge-base --is-ancestor "$previous_release" release
-
-          # Do not introduce release's workflow commits on master either.
-          if ! git diff --quiet "$previous_release" release -- . ':(exclude).github/workflows/**'; then
-            git diff --binary "$previous_release" release -- . ':(exclude).github/workflows/**' | git apply --3way --index
-          fi
-          git rev-parse release > .synced-release-sha
-          git add .synced-release-sha
-          if ! git diff --cached --quiet; then
-            git commit -m "Publish validated release without workflow changes"
-          fi
-
+          git fetch origin refs/heads/master:refs/remotes/origin/master
+          node scripts/sync-personal-fork.mjs
       - name: Install dependencies
+        if: steps.prepare.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
         uses: ./.github/actions/install-dependencies
         with:
           node-version: "24"
-
-      - name: Verify upstream and the private commit counter
+      - name: Verify sync, upstream, the private counter and the deployable artifact
+        if: steps.prepare.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
         run: |
+          set -euo pipefail
+          node --test scripts/sync-personal-fork.test.mjs
+          pnpm run format:check
+          pnpm run lint
+          pnpm run lint:knip
+          pnpm run lint:deps
+          pnpm --filter ./packages/core/ run check-graphql-types
+          pnpm run typecheck
           pnpm run build:packages
           pnpm exec vitest run
-          pnpm run build:frontend
+          node scripts/build-personal-vercel.mjs
+          node apps/backend/scripts/check-personal-vercel.mjs
+      - name: Bundle only validated commits
+        if: steps.prepare.outputs.changed == 'true'
+        run: git bundle create "$RUNNER_TEMP/validated-sync.bundle" release master
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: steps.prepare.outputs.changed == 'true'
+        with:
+          name: validated-sync-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/validated-sync.bundle
+          retention-days: 1
+          if-no-files-found: error
 
-      - name: Publish both validated branches together
-        run: git push --atomic origin release master
+  publish:
+    needs: validate
+    if: needs.validate.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: release
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: validated-sync-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}
+      - name: Publish both validated branches atomically
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_BASE: ${{ needs.validate.outputs.release_base }}
+          MASTER_BASE: ${{ needs.validate.outputs.master_base }}
+          RELEASE_SHA: ${{ needs.validate.outputs.release }}
+          MASTER_SHA: ${{ needs.validate.outputs.master }}
+        run: |
+          set -euo pipefail
+          git fetch origin refs/heads/release:refs/remotes/origin/release refs/heads/master:refs/remotes/origin/master
+          test "$(git rev-parse origin/release)" = "$RELEASE_BASE"
+          test "$(git rev-parse origin/master)" = "$MASTER_BASE"
+          git -c core.hooksPath=/dev/null fetch "$RUNNER_TEMP/validated-sync.bundle" refs/heads/release:refs/heads/candidate-release refs/heads/master:refs/heads/candidate-master
+          test "$(git rev-parse candidate-release)" = "$RELEASE_SHA"
+          test "$(git rev-parse candidate-master)" = "$MASTER_SHA"
+          git merge-base --is-ancestor origin/release candidate-release
+          git merge-base --is-ancestor origin/master candidate-master
+          git diff --exit-code origin/release candidate-release -- .github/workflows
+          git diff --exit-code origin/master candidate-master -- .github/workflows
+          authorization="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+          git -c core.hooksPath=/dev/null -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $authorization" push --atomic origin candidate-release:refs/heads/release candidate-master:refs/heads/master
