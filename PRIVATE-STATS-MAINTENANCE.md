@@ -41,6 +41,8 @@ The publisher rejects concurrent branch updates and never force-pushes.
 an Express function on Node.js 24 and frontend files served by Vercel's CDN.
 It no longer depends on upstream's deleted `_dot_vercel_copy` templates or
 `vercel-preparation.sh`, and does not require a container or a paid plan.
+The gist, repository, language and Wakatime card URLs use function aliases,
+not rewrites to `/api`, so the upstream router receives their original paths.
 `apps/backend/scripts/check-personal-vercel.mjs` runs the actual packaged function with a
 dummy token and blocked external networking, checking the historical count,
 query parameters, trailing slashes, redirects and static documentation.

@@ -1,5 +1,13 @@
 import { spawnSync } from "node:child_process";
-import { cp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import {
+  cp,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -61,6 +69,13 @@ await writeFile(
     launcherType: "Nodejs",
   }),
 );
+// Function aliases preserve the requested API path for the upstream router.
+// A rewrite to /api would lose the original card path on Vercel.
+for (const route of ["gist", "pin", "top-langs", "wakatime"]) {
+  const alias = path.join(output, "functions/api", route + ".func");
+  await mkdir(path.dirname(alias), { recursive: true });
+  await symlink(path.relative(path.dirname(alias), functionPath), alias, "dir");
+}
 await cp(
   path.join(root, "apps/frontend/build"),
   path.join(output, "static/frontend"),
@@ -73,7 +88,6 @@ await writeFile(
     routes: [
       { src: "/", status: 307, headers: { Location: "/frontend/docs/" } },
       { handle: "filesystem" },
-      { src: "/api(?:/.*)?", dest: "/api" },
     ],
   }),
 );
